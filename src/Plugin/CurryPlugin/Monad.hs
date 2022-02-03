@@ -12,6 +12,11 @@
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE DeriveFunctor   #-}
+{-# LANGUAGE TypeFamilies    #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ViewPatterns    #-}
+{-# LANGUAGE OverloadedLists #-}
 {-|
 Module      : Plugin.CurryPlugin.Monad
 Description : Convenience wrapper for the effect
@@ -24,46 +29,161 @@ The monad type is a wrapper over the
 'Lazy' type from 'Plugin.Effect.CurryEffect'.
 -}
 module Plugin.CurryPlugin.Monad
-  ( Nondet(..), type (-->)(..), (?), failed, share
+  ( Tree(..), type (-->)(..), (?), failed, share
   , SearchMode(..)
   , Normalform(..), modeOp, allValues, allValuesNF
   , NondetTag(..)
-  , liftNondet1, liftNondet2
+  , liftTree1, liftTree2
   , app, apply2, apply2Unlifted, apply3
   , bind, rtrn, rtrnFunc, fmp, shre, shreTopLevel, seqValue
   , rtrnFuncUnsafePoly, appUnsafePoly )
   where
 
-import Language.Haskell.TH.Syntax
+import Language.Haskell.TH.Syntax hiding (Q)
 import Control.Applicative
 import Control.Monad
 import Unsafe.Coerce
 
 import Plugin.Effect.Classes
-import Plugin.CurryPlugin.Tree
+-- import Plugin.CurryPlugin.Tree
 import Plugin.Effect.Annotation
 import Plugin.Effect.Transformers
 
+-- imports from Tree module
+import Control.Monad
+import Control.Applicative
+import GHC.Exts
+
+-- | Nondeterministic can be represented as trees, where results are
+-- annotated at the leaves and nodes correspond to choices.
+data Tree a = Failed
+            | Leaf a
+            | Choice (Tree a) (Tree a)
+  deriving (Show, Functor)
+
+instance Applicative Tree where
+  pure = Leaf
+  Failed       <*> _ = Failed
+  Leaf f       <*> t = fmap f t
+  Choice tl tr <*> t = Choice (tl <*> t) (tr <*> t)
+
+instance Alternative Tree where
+  empty = Failed
+  (<|>) = Choice
+
+instance Monad Tree where
+  Failed       >>= _ = Failed
+  Leaf a       >>= f = f a
+  Choice tl tr >>= f = Choice (tl >>= f) (tr >>= f)
+
+instance MonadFail Tree where
+  fail _ = Failed
+
+instance MonadPlus Tree where
+  mzero = Failed
+  mplus = Choice
+
+-- * Search algorithms
+
+-- | Depth-first traversal of a choice tree to collect results into a list.
+dfs :: Tree a -> [a]
+dfs t = dfs' t []
+  where
+    dfs' (Leaf a)       = (a:)
+    dfs' (Choice t1 t2) = dfs' t1 . dfs' t2
+    dfs' Failed         = id
+
+
+-- | Breadth-first traversal of a choice tree to collect results into a list.
+bfs :: Tree a -> [a]
+bfs t = bfs' [t]
+  where
+    bfs' (Leaf   a     :< q) = a : bfs' q
+    bfs' (Choice t1 t2 :< q) = bfs' (t2 :< t1 :< q)
+    bfs' (Failed       :< q) = bfs' q
+    bfs' Nil                 = []
+
+---------------------------------------
+-- Queue Implementation
+---------------------------------------
+
+data Queue a = Q [a] [a]
+  deriving (Show, Eq, Ord, Functor)
+
+{-# COMPLETE (:<), Nil #-}
+
+infixr 5 :<
+pattern (:<) :: a -> Queue a -> Queue a
+pattern x :< xs <- (uncons -> Just (x, xs)) where
+  x :< xs = enqueue x xs
+
+pattern Nil :: Queue a
+pattern Nil <- (uncons -> Nothing) where
+  Nil = emptyQueue
+
+instance IsList (Queue a) where
+  type Item (Queue a) = a
+  fromList = flip Q []
+  toList (Q xs ys) = xs ++ reverse ys
+
+instance Semigroup (Queue a) where
+  Q []  _   <> q         = q
+  Q xs1 ys1 <> Q xs2 ys2 = Q xs1 (ys1 ++ reverse xs2 ++ ys2)
+
+instance Monoid (Queue a) where
+  mempty = emptyQueue
+
+emptyQueue :: Queue a
+emptyQueue = Q [] []
+
+enqueue :: a -> Queue a -> Queue a
+enqueue x (Q xs ys) = queue xs (x:ys)
+
+uncons :: Queue a -> Maybe (a, Queue a)
+uncons q = (,) <$> peek q <*> dequeue q
+
+peek :: Queue a -> Maybe a
+peek (Q (x:_) _) = Just x
+peek _           = Nothing
+
+dequeue :: Queue a -> Maybe (Queue a)
+dequeue (Q (_:xs) ys) = Just (queue xs ys)
+dequeue _             = Nothing
+
+-- Invariant: If the first list is empty, then also the second list is empty.
+queue :: [a] -> [a] -> Queue a
+queue [] ys = Q (reverse ys) []
+queue xs ys = Q xs ys
+
+
+-- Here starts the original Nondet module
+
 -- | The actual monad for nondeterminism used by the plugin.
-newtype Nondet a = Nondet { unNondet :: LazyT Nondet Tree a }
-  deriving (Functor, Applicative, Monad, Alternative, MonadPlus, Sharing)
-    via LazyT Nondet Tree
-  deriving anyclass (SharingTop)
+-- newtype Nondet a = Nondet { unNondet :: LazyT Nondet Tree a }
+--   deriving (Functor, Applicative, Monad, Alternative, MonadPlus, Sharing)
+--     via LazyT Nondet Tree
+--   deriving anyclass (SharingTop)
+
+instance Sharing Tree where
+  share = return
+
+instance SharingTop Tree where
+  shareTopLevel _ = id
 
 {-# INLINE[0] bind #-}
-bind :: Nondet a -> (a -> Nondet b) -> Nondet b
+bind :: Tree a -> (a -> Tree b) -> Tree b
 bind = (>>=)
 
 {-# INLINE[0] rtrn #-}
-rtrn :: a -> Nondet a
+rtrn :: a -> Tree a
 rtrn = pure
 
 {-# INLINE[0] rtrnFunc #-}
-rtrnFunc :: (Nondet a -> Nondet b) -> Nondet (a --> b)
+rtrnFunc :: (Tree a -> Tree b) -> Tree (a --> b)
 rtrnFunc = pure
 
 {-# INLINE[0] app #-}
-app :: Nondet (a --> b) -> Nondet a -> Nondet b
+app :: Tree (a --> b) -> Tree a -> Tree b
 app mf ma = mf >>= \f -> f ma
 
 -- HACK:
@@ -81,27 +201,27 @@ app mf ma = mf >>= \f -> f ma
 -- To remedy this, we provide the following two functions using unsafeCoerce to
 -- accomodate such a RankN type.
 {-# INLINE[0] rtrnFuncUnsafePoly #-}
-rtrnFuncUnsafePoly :: forall a b a'. (a' -> Nondet b) -> Nondet (a --> b)
-rtrnFuncUnsafePoly f = pure (unsafeCoerce f :: Nondet a -> Nondet b)
+rtrnFuncUnsafePoly :: forall a b a'. (a' -> Tree b) -> Tree (a --> b)
+rtrnFuncUnsafePoly f = pure (unsafeCoerce f :: Tree a -> Tree b)
 
 {-# INLINE[0] appUnsafePoly #-}
-appUnsafePoly :: forall a b a'. Nondet (a --> b) -> a' -> Nondet b
-appUnsafePoly mf ma = mf >>= \f -> (unsafeCoerce f :: a' -> Nondet b) ma
+appUnsafePoly :: forall a b a'. Tree (a --> b) -> a' -> Tree b
+appUnsafePoly mf ma = mf >>= \f -> (unsafeCoerce f :: a' -> Tree b) ma
 
 {-# INLINE[0] fmp #-}
-fmp :: (a -> b) -> Nondet a -> Nondet b
+fmp :: (a -> b) -> Tree a -> Tree b
 fmp = fmap
 
 {-# INLINE[0] shre #-}
-shre :: Shareable Nondet a => Nondet a -> Nondet (Nondet a)
+shre :: Shareable Tree a => Tree a -> Tree (Tree a)
 shre = share
 
 {-# INLINE[0] shreTopLevel #-}
-shreTopLevel :: (Int, String) -> Nondet a -> Nondet a
+shreTopLevel :: (Int, String) -> Tree a -> Tree a
 shreTopLevel = shareTopLevel
 
 {-# INLINE seqValue #-}
-seqValue :: Nondet a -> Nondet b -> Nondet b
+seqValue :: Tree a -> Tree b -> Tree b
 seqValue a b = a >>= \a' -> a' `seq` b
 
 {-# RULES
@@ -110,14 +230,14 @@ seqValue a b = a >>= \a' -> a' `seq` b
   #-}
   -- "bind/rtrn'let"   forall e x. let b = e in rtrn x = rtrn (let b = e in x)
 
--- | Nondeterministic failure
-failed :: Shareable Nondet a => Nondet a
+-- | Treeerministic failure
+failed :: Shareable Tree a => Tree a
 failed = mzero
 
 infixr 0 ?
 {-# INLINE (?) #-}
--- | Nondeterministic choice
-(?) :: Shareable Nondet a => Nondet (a --> a --> a)
+-- | Treeerministic choice
+(?) :: Shareable Tree a => Tree (a --> a --> a)
 (?) = rtrnFunc $ \t1 -> rtrnFunc $ \t2 -> t1 `mplus` t2
 
 -- | Enumeration of available search modes.
@@ -132,19 +252,19 @@ modeOp BFS = bfs
 
 -- | Collect the results of a nondeterministic computation
 -- as their normal form in a tree.
-allValuesNF :: Normalform Nondet a b
-            => Nondet a -> Tree b
+allValuesNF :: Normalform Tree a b
+            => Tree a -> Tree b
 allValuesNF = allValues . nf
 
 -- | Collect the results of a nondeterministic computation in a tree.
-allValues :: Nondet a -> Tree a
-allValues = runLazyT . unNondet
+allValues :: Tree a -> Tree a
+allValues = id
 
 infixr 0 -->
-type a --> b = Nondet a -> Nondet b
+type a --> b = Tree a -> Tree b
 
-instance (Normalform Nondet a1 a2, Normalform Nondet b1 b2)
-  => Normalform Nondet (a1 --> b1) (a2 -> b2) where
+instance (Normalform Tree a1 a2, Normalform Tree b1 b2)
+  => Normalform Tree (a1 --> b1) (a2 -> b2) where
     nf    mf =
       mf >> return (error "Plugin Error: Cannot capture function types")
     liftE mf = do
@@ -152,25 +272,25 @@ instance (Normalform Nondet a1 a2, Normalform Nondet b1 b2)
       return (liftE . fmap f . nf)
 
 -- | Lift a unary function with the lifting scheme of the plugin.
-liftNondet1 :: (a -> b) -> Nondet (a --> b)
-liftNondet1 f = rtrnFunc (\a -> a >>= \a' -> return (f a'))
+liftTree1 :: (a -> b) -> Tree (a --> b)
+liftTree1 f = rtrnFunc (\a -> a >>= \a' -> return (f a'))
 
 -- | Lift a 2-ary function with the lifting scheme of the plugin.
-liftNondet2 :: (a -> b -> c) -> Nondet (a --> b --> c)
-liftNondet2 f = rtrnFunc (\a  -> rtrnFunc (\b  ->
+liftTree2 :: (a -> b -> c) -> Tree (a --> b --> c)
+liftTree2 f = rtrnFunc (\a  -> rtrnFunc (\b  ->
                 a >>=  \a' -> b >>=     \b' -> return (f a' b')))
 
 -- | Apply a lifted 2-ary function to its lifted arguments.
-apply2 :: Nondet (a --> b --> c) -> Nondet a -> Nondet b -> Nondet c
+apply2 :: Tree (a --> b --> c) -> Tree a -> Tree b -> Tree c
 apply2 f a b = app f a >>= \f' -> f' b
 
 -- | Apply a lifted 2-ary function to its arguments, where just the
 -- first argument has to be lifted.
-apply2Unlifted :: Nondet (a --> b --> c)
-               -> Nondet a -> b -> Nondet c
+apply2Unlifted :: Tree (a --> b --> c)
+               -> Tree a -> b -> Tree c
 apply2Unlifted f a b = app f a >>= \f' -> f' (return b)
 
 -- | Apply a lifted 3-ary function to its lifted arguments.
-apply3 :: Nondet (a --> b --> c --> d)
-       -> Nondet a -> Nondet b -> Nondet c -> Nondet d
+apply3 :: Tree (a --> b --> c --> d)
+       -> Tree a -> Tree b -> Tree c -> Tree d
 apply3 f a b c = apply2 f a b >>= \f' -> f' c

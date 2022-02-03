@@ -40,34 +40,34 @@ import Plugin.CurryPlugin.Monad
 import Plugin.Effect.Classes (Shareable(..))
 
 -- | This is a lifted version of the unrestricted function type constructor
-type (:->) r s a b = (Nondet a -> Nondet b)
+type (:->) r s a b = (Tree a -> Tree b)
 
 -- | This is a lifted version of the restricted function type constructor
-type (:-->) m r s a b = (Nondet a -> Nondet b)
+type (:-->) m r s a b = (Tree a -> Tree b)
 
--- | Alias for Shareable constraint specialized to the nondeterminism monad.
-type ShareableN a = Shareable Nondet a
+-- | Alias for Shareable constraint specialized to the Treeerminism monad.
+type ShareableN a = Shareable Tree a
 
 -- * Lifted list type and internal instances
 
 -- | Lifted defintion for Haskell's default list type '[]'
-data ListND a = Nil | Cons (Nondet a) (Nondet (ListND a))
+data ListND a = Nil | Cons (Tree a) (Tree (ListND a))
 
 -- | Lifted smart constructor for 'Nil'
-nil :: Nondet (ListND a)
+nil :: Tree (ListND a)
 nil = P.return Nil
 
 -- | Lifted smart constructor for 'Cons'
-cons :: Nondet (a --> ListND a --> ListND a)
+cons :: Tree (a --> ListND a --> ListND a)
 cons = rtrnFunc $ \a -> rtrnFunc $ \as -> P.return (Cons a as)
 
 -- | Shareable instance for lists.
-instance Shareable Nondet a => Shareable Nondet (ListND a) where
+instance Shareable Tree a => Shareable Tree (ListND a) where
   shareArgs Nil         = P.return Nil
   shareArgs (Cons x xs) = Cons P.<$> share x P.<*> share xs
 
 -- | Normalform instance for lists
-instance Normalform Nondet a1 a2 => Normalform Nondet (ListND a1) [a2] where
+instance Normalform Tree a1 a2 => Normalform Tree (ListND a1) [a2] where
   nf mxs = mxs P.>>= \case
     Nil       -> P.return []
     Cons x xs -> (:) P.<$> nf x P.<*> nf xs
@@ -79,24 +79,24 @@ instance Normalform Nondet a1 a2 => Normalform Nondet (ListND a1) [a2] where
 -- * Lifted tuple types and internal instances
 
 -- | Lifted defintion for Haskell's 2-ary tuple '(,)'
-data Tuple2ND a b = Tuple2 (Nondet a) (Nondet b)
+data Tuple2ND a b = Tuple2 (Tree a) (Tree b)
 
 -- | Selector for the first component of a lifted 2-ary tuple
-fst :: Nondet (Tuple2ND a b --> a)
+fst :: Tree (Tuple2ND a b --> a)
 fst = rtrnFunc $ \t -> t P.>>= \(Tuple2 a _) -> a
 
 -- | Selector for the second component of a lifted 2-ary tuple
-snd :: Nondet (Tuple2ND a b --> b)
+snd :: Tree (Tuple2ND a b --> b)
 snd = rtrnFunc $ \t -> t P.>>= \(Tuple2 _ b) -> b
 
 -- | Shareable instance for 2-ary tuple
-instance (Shareable Nondet a, Shareable Nondet b) =>
-  Shareable Nondet (Tuple2ND a b) where
+instance (Shareable Tree a, Shareable Tree b) =>
+  Shareable Tree (Tuple2ND a b) where
     shareArgs (Tuple2 a b) = Tuple2 P.<$> share a P.<*> share b
 
 -- | Normalform instance for 2-ary tuple
-instance (Normalform Nondet a1 a2, Normalform Nondet b1 b2) =>
-  Normalform Nondet (Tuple2ND a1 b1) (a2, b2) where
+instance (Normalform Tree a1 a2, Normalform Tree b1 b2) =>
+  Normalform Tree (Tuple2ND a1 b1) (a2, b2) where
     nf mxs = mxs P.>>= \(Tuple2 a b) -> (,) P.<$> nf a P.<*> nf b
     liftE mxs = mxs P.>>= \(a, b) -> Tuple2 P.<$> P.return (liftE (P.return a))
                                             P.<*> P.return (liftE (P.return b))
@@ -107,16 +107,16 @@ instance (Normalform Nondet a1 a2, Normalform Nondet b1 b2) =>
 type StringND = ListND P.Char
 
 -- | Lifted defintion for Haskell's 'Ratio' type
-data RatioND a = !(Nondet a) :% !(Nondet a)
+data RatioND a = !(Tree a) :% !(Tree a)
 
 -- | Shareable instance for Ratios
-instance (Shareable Nondet a) =>
-  Shareable Nondet (RatioND a) where
+instance (Shareable Tree a) =>
+  Shareable Tree (RatioND a) where
     shareArgs (a :% b) = (:%) P.<$> share a P.<*> share b
 
 -- | Normalform instance for Ratios
-instance (Normalform Nondet a1 a2) =>
-  Normalform Nondet (RatioND a1) (P.Ratio a2) where
+instance (Normalform Tree a1 a2) =>
+  Normalform Tree (RatioND a1) (P.Ratio a2) where
     nf mxs = mxs P.>>= \(a :% b) -> (P.:%) P.<$> nf a P.<*> nf b
     liftE mxs = mxs P.>>= \(a P.:% b) ->
       (:%) P.<$> P.return (liftE (P.return a))
@@ -136,16 +136,16 @@ type RationalND = RatioND Integer
 -- | Function to use for pattern match failures
 -- Pattern match failure is translated to a failed for Curry,
 -- ignoring the string.
-pE :: ShareableN a => Nondet (ListND Char --> a)
+pE :: ShareableN a => Tree (ListND Char --> a)
 pE = rtrnFunc (P.>>= P.const failed)
 
 -- | Lifted identity function
-id :: Nondet (a --> a)
+id :: Tree (a --> a)
 id = rtrnFunc P.id
 
 -- | Lifted logical negation
-not :: Nondet (Bool --> Bool)
-not = liftNondet1 P.not
+not :: Tree (Bool --> Bool)
+not = liftTree1 P.not
 
 -- Note: In order to be able to keep all type-applications
 -- of the original code for the following "primops",
@@ -153,56 +153,56 @@ not = liftNondet1 P.not
 -- even if they are unused
 
 -- Lifted seq operator to force evaluation. Forces the effect and value.
-seq :: forall (k :: RuntimeRep) a b. Nondet (a --> b --> b)
+seq :: forall (k :: RuntimeRep) a b. Tree (a --> b --> b)
 seq = rtrnFunc $ \a -> rtrnFunc $ \b ->
   (a P.>>= \a' -> P.seq a' b)
 
 -- Lifted function to desugar left sections.
 leftSection :: forall (r1 :: RuntimeRep) (r2 :: RuntimeRep)
                       (n :: Multiplicity) a b.
-               Nondet ((a --> b) --> a --> b)
+               Tree ((a --> b) --> a --> b)
 leftSection = rtrnFunc $ \f -> rtrnFunc $ \a ->
   f `app` a
 
 -- Lifted function to desugar right sections.
 rightSection :: forall (r1 :: RuntimeRep) (r2 :: RuntimeRep) (r3 :: RuntimeRep)
                        (n1 :: Multiplicity) (n2 :: Multiplicity) a b c.
-                Nondet ((a --> b --> c) --> b --> a --> c)
+                Tree ((a --> b --> c) --> b --> a --> c)
 rightSection = rtrnFunc $ \f -> rtrnFunc $ \b -> rtrnFunc $ \a ->
   f `app` a `app` b
 
 -- | Lifted const function
-const :: Nondet (a --> b --> a)
+const :: Tree (a --> b --> a)
 const = rtrnFunc $ \a -> rtrnFunc $ \_ -> a
 
 -- | Lifted logical and
-(&&) :: Nondet (Bool --> Bool --> Bool)
+(&&) :: Tree (Bool --> Bool --> Bool)
 (&&) =  rtrnFunc $ \a1 -> rtrnFunc $ \a2 -> a1 P.>>= \case
   False -> P.return False
   True  -> a2
 
 -- | Lifted guard function used to desugar monad comprehensions
 guard :: (AlternativeND f, forall x . ShareableN x => ShareableN (f x))
-      => Nondet (Bool --> f ())
+      => Tree (Bool --> f ())
 guard = rtrnFunc $ \b -> b P.>>= \case
   True  -> pure `app` (P.return ())
   False -> empty
 
 -- | Lifted append function for lists
-append :: ShareableN a => Nondet (ListND a --> ListND a --> ListND a)
+append :: ShareableN a => Tree (ListND a --> ListND a --> ListND a)
 append = rtrnFunc $ \xs -> rtrnFunc $ \ys -> xs P.>>= \case
   Nil       -> ys
   Cons a as -> P.return (Cons a (apply2 append as ys))
 
 -- | Lifted concatMap function for lists
 concatMap :: (ShareableN a, ShareableN b)
-          => Nondet ((a --> ListND b) --> ListND a --> ListND b)
+          => Tree ((a --> ListND b) --> ListND a --> ListND b)
 concatMap = rtrnFunc $ \f -> rtrnFunc $ \xs -> xs P.>>= \case
   Nil       -> P.return Nil
   Cons a as -> append `app` (f `app` a) `app` (concatMap `app` f `app` as)
 
 -- | Lifted map function for lists
-map :: Nondet ((a --> b) --> ListND a --> ListND b)
+map :: Tree ((a --> b) --> ListND a --> ListND b)
 map = rtrnFunc $ \f' -> share f' P.>>= \f ->
   rtrnFunc $ \xs -> xs P.>>= \case
   Nil       -> P.return Nil
@@ -212,26 +212,26 @@ map = rtrnFunc $ \f' -> share f' P.>>= \f ->
 -- We need to introduce this unused dummy k,
 -- because we replace Data.Coerce.coerce (which has this k).
 coerce :: forall (k :: RuntimeRep) a b. (ShareableN a, ShareableN b)
-       => Nondet (a --> b)
+       => Tree (a --> b)
 coerce = rtrnFunc $ \a -> a P.>>= \a' -> P.return (unsafeCoerce a')
 
 -- | Lifted equality test for strings
-eqString :: Nondet (StringND --> StringND --> Bool)
+eqString :: Tree (StringND --> StringND --> Bool)
 eqString = (==)
 
-(<#) :: Nondet (Int --> Int --> Int)
+(<#) :: Tree (Int --> Int --> Int)
 (<#) = rtrnFunc $ \a -> rtrnFunc $ \b ->
   a P.>>= \ (P.I# a') -> b P.>>= \ (P.I# b') ->
    P.return (P.I# (a' P.<# b'))
 
-(==#) :: Nondet (Int --> Int --> Int)
+(==#) :: Tree (Int --> Int --> Int)
 (==#) = rtrnFunc $ \a -> rtrnFunc $ \b ->
   a P.>>= \ (P.I# a') -> b P.>>= \ (P.I# b') ->
   P.return (P.I# (a' P.==# b'))
 
 -- |  Lifted composition operator for functions
 (.) :: (ShareableN a, ShareableN b, ShareableN c)
-    => Nondet ((b --> c) --> (a --> b) --> a --> c)
+    => Tree ((b --> c) --> (a --> b) --> a --> c)
 (.) = rtrnFunc $ \f1 -> rtrnFunc $ \f2 -> rtrnFunc $ \a ->
   f1 `app` (f2 `app` a)
 
@@ -243,17 +243,17 @@ type ShowSND = StringND --> StringND
 -- | Lifted Show type class
 class ShowND a where
   {-# MINIMAL showsPrec | show #-}
-  showsPrec :: Nondet (Int --> a --> ShowSND)
+  showsPrec :: Tree (Int --> a --> ShowSND)
   showsPrec = rtrnFunc $ \_ -> rtrnFunc $ \x -> rtrnFunc $ \s ->
     apply2 append (show `app` x) s
 
-  show :: Nondet (a --> StringND)
+  show :: Tree (a --> StringND)
   show = rtrnFunc $ \x -> apply2 shows x (P.return Nil)
 
-  showList :: Nondet (ListND a --> ShowSND)
+  showList :: Tree (ListND a --> ShowSND)
   showList = rtrnFunc $ \ls -> rtrnFunc $ \s -> apply3 showsList__ shows ls s
 
-showsList__ :: Nondet ((a --> ShowSND) --> ListND a --> ShowSND)
+showsList__ :: Tree ((a --> ShowSND) --> ListND a --> ShowSND)
 showsList__ = rtrnFunc $ \showx -> rtrnFunc $ \list -> rtrnFunc $ \s ->
   list P.>>= \case
     Nil       -> apply2 append (liftE (P.return "[]")) s
@@ -268,19 +268,19 @@ showsList__ = rtrnFunc $ \showx -> rtrnFunc $ \list -> rtrnFunc $ \s ->
           P.return (Cons (P.return ',')
             (apply2 showx y (apply3 showl showx ys s)))
 
-shows :: ShowND a => Nondet (a --> ShowSND)
+shows :: ShowND a => Tree (a --> ShowSND)
 shows = showsPrec `app` (P.return 0)
 
-showString :: Nondet (StringND --> ShowSND)
+showString :: Tree (StringND --> ShowSND)
 showString = append
 
-showCommaSpace :: Nondet ShowSND
+showCommaSpace :: Tree ShowSND
 showCommaSpace = showString `app` (liftE (P.return ", "))
 
-showSpace :: Nondet ShowSND
+showSpace :: Tree ShowSND
 showSpace =  showString `app` (liftE (P.return " "))
 
-showParen :: Nondet (Bool --> ShowSND --> ShowSND)
+showParen :: Tree (Bool --> ShowSND --> ShowSND)
 showParen = rtrnFunc $ \b -> rtrnFunc $ \s -> b P.>>= \case
   True  -> apply2 (.) (showString `app` (liftE (P.return "(")))
           (apply2 (.) s (showString `app` (liftE (P.return ")"))))
@@ -316,39 +316,39 @@ instance (ShowND a, ShareableN a) => ShowND (ListND a) where
 
 -- | Lifted Eq type class
 class EqND a where
-  (==) :: Nondet (a --> a --> Bool)
+  (==) :: Tree (a --> a --> Bool)
   (==) = rtrnFunc $ \a1 -> rtrnFunc $ \a2 -> not `app` (apply2 (/=) a1 a2)
 
-  (/=) :: Nondet (a --> a --> Bool)
+  (/=) :: Tree (a --> a --> Bool)
   (/=) = rtrnFunc $ \a1 -> rtrnFunc $ \a2 -> not `app` (apply2 (==) a1 a2)
 
 instance EqND Bool where
-  (==) = liftNondet2 (P.==)
-  (/=) = liftNondet2 (P./=)
+  (==) = liftTree2 (P.==)
+  (/=) = liftTree2 (P./=)
 
 instance EqND () where
   (==) = rtrnFunc $ \_ -> rtrnFunc $ \_ -> P.return True
   (/=) = rtrnFunc $ \_ -> rtrnFunc $ \_ -> P.return False
 
 instance EqND Int where
-  (==) = liftNondet2 (P.==)
-  (/=) = liftNondet2 (P./=)
+  (==) = liftTree2 (P.==)
+  (/=) = liftTree2 (P./=)
 
 instance EqND Integer where
-  (==) = liftNondet2 (P.==)
-  (/=) = liftNondet2 (P./=)
+  (==) = liftTree2 (P.==)
+  (/=) = liftTree2 (P./=)
 
 instance EqND Float where
-  (==) = liftNondet2 (P.==)
-  (/=) = liftNondet2 (P./=)
+  (==) = liftTree2 (P.==)
+  (/=) = liftTree2 (P./=)
 
 instance EqND Double where
-  (==) = liftNondet2 (P.==)
-  (/=) = liftNondet2 (P./=)
+  (==) = liftTree2 (P.==)
+  (/=) = liftTree2 (P./=)
 
 instance EqND Char where
-  (==) = liftNondet2 (P.==)
-  (/=) = liftNondet2 (P./=)
+  (==) = liftTree2 (P.==)
+  (/=) = liftTree2 (P./=)
 
 instance (EqND a, ShareableN a) => EqND (ListND a) where
   (==) = rtrnFunc $ \a1 -> rtrnFunc $ \a2 -> a1 P.>>= \case
@@ -373,7 +373,7 @@ instance (EqND a, ShareableN a) => EqND (RatioND a) where
     eqOn a1 a2 b1 b2
 
 eqOn :: (EqND a1, EqND a2, ShareableN a1, ShareableN a2)
-     => Nondet a1 -> Nondet a1 -> Nondet a2 -> Nondet a2 -> Nondet Bool
+     => Tree a1 -> Tree a1 -> Tree a2 -> Tree a2 -> Tree Bool
 eqOn x y xs ys = apply2 (&&) (apply2 (==) x y) (apply2 (==) xs ys)
 
 -- * Lifted Ord type class, instances and functions
@@ -381,7 +381,7 @@ eqOn x y xs ys = apply2 (&&) (apply2 (==) x y) (apply2 (==) xs ys)
 -- | Lifted Ord type class
 class EqND a => OrdND a where
   {-# MINIMAL compare | (<=) #-}
-  compare :: Nondet (a --> a --> Ordering)
+  compare :: Tree (a --> a --> Ordering)
   compare = rtrnFunc $ \a1 -> rtrnFunc $ \a2 ->
     apply2 (==) a1 a2 P.>>= \b1 -> if b1
       then P.return EQ
@@ -389,46 +389,46 @@ class EqND a => OrdND a where
         then P.return LT
         else P.return GT
 
-  (<) :: Nondet (a --> a --> Bool)
+  (<) :: Tree (a --> a --> Bool)
   (<) = rtrnFunc $ \a1 -> rtrnFunc $ \a2 ->
     apply2 compare a1 a2 P.>>= \case
       LT -> P.return True
       _  -> P.return False
 
-  (<=) :: Nondet (a --> a --> Bool)
+  (<=) :: Tree (a --> a --> Bool)
   (<=) = rtrnFunc $ \a1 -> rtrnFunc $ \a2 ->
     apply2 compare a1 a2 P.>>= \case
       GT -> P.return False
       _  -> P.return True
 
-  (>) :: Nondet (a --> a --> Bool)
+  (>) :: Tree (a --> a --> Bool)
   (>) = rtrnFunc $ \a1 -> rtrnFunc $ \a2 ->
     apply2 compare a1 a2 P.>>= \case
       GT -> P.return True
       _  -> P.return False
 
-  (>=) :: Nondet (a --> a --> Bool)
+  (>=) :: Tree (a --> a --> Bool)
   (>=) = rtrnFunc $ \a1 -> rtrnFunc $ \a2 ->
     apply2 compare a1 a2 P.>>= \case
       LT -> P.return False
       _  -> P.return True
 
   -- This default implementation is replaced at compile-time with maxDefault
-  max :: Nondet (a --> a --> a)
+  max :: Tree (a --> a --> a)
   max = P.undefined
 
   -- This default implementation is replaced at compile-time with minDefault
-  min :: Nondet (a --> a --> a)
+  min :: Tree (a --> a --> a)
   min = P.undefined
 
-maxDefault :: (OrdND a, ShareableN a) => Nondet (a --> a --> a)
+maxDefault :: (OrdND a, ShareableN a) => Tree (a --> a --> a)
 maxDefault = rtrnFunc $ \a1 -> rtrnFunc $ \a2 ->
   share a1 P.>>= \a1' -> share a2 P.>>= \a2' ->
   apply2 (>=) a1' a2' P.>>= \case
     True -> a1'
     _    -> a2'
 
-minDefault :: (OrdND a, ShareableN a) => Nondet (a --> a --> a)
+minDefault :: (OrdND a, ShareableN a) => Tree (a --> a --> a)
 minDefault = rtrnFunc $ \a1 -> rtrnFunc $ \a2 ->
   share a1 P.>>= \a1' -> share a2 P.>>= \a2' ->
   apply2 (<=) a1' a2' P.>>= \case
@@ -436,22 +436,22 @@ minDefault = rtrnFunc $ \a1 -> rtrnFunc $ \a2 ->
     _    -> a2'
 
 instance OrdND Bool where
-  compare = liftNondet2 P.compare
+  compare = liftTree2 P.compare
 
 instance OrdND () where
   compare = rtrnFunc $ \_ -> rtrnFunc $ \_ -> P.return EQ
 
 instance OrdND Int where
-  compare = liftNondet2 P.compare
+  compare = liftTree2 P.compare
 
 instance OrdND Integer where
-  compare = liftNondet2 P.compare
+  compare = liftTree2 P.compare
 
 instance OrdND Float where
-  compare = liftNondet2 P.compare
+  compare = liftTree2 P.compare
 
 instance OrdND Double where
-  compare = liftNondet2 P.compare
+  compare = liftTree2 P.compare
 
 instance (OrdND a, ShareableN a) => OrdND (ListND a) where
   compare = rtrnFunc $ \x -> rtrnFunc $ \y ->
@@ -475,52 +475,52 @@ instance (OrdND a, OrdND b, ShareableN a, ShareableN b) =>
 
 -- | Lifted Num type class
 class NumND a where
-  (+) :: Nondet (a --> a --> a)
-  (-) :: Nondet (a --> a --> a)
+  (+) :: Tree (a --> a --> a)
+  (-) :: Tree (a --> a --> a)
   (-) = rtrnFunc $ \a -> rtrnFunc $ \b ->
     (+) `app` a `app` (negate `app` b)
-  (*) :: Nondet (a --> a --> a)
-  negate :: Nondet (a --> a)
+  (*) :: Tree (a --> a --> a)
+  negate :: Tree (a --> a)
   negate = rtrnFunc $ \a -> (-) `app` (fromInteger `app` (P.return 0)) `app` a
-  abs    :: Nondet (a --> a)
-  signum :: Nondet (a --> a)
-  fromInteger :: Nondet (P.Integer --> a)
+  abs    :: Tree (a --> a)
+  signum :: Tree (a --> a)
+  fromInteger :: Tree (P.Integer --> a)
 
 instance NumND Int where
-  (+) = liftNondet2 (P.+)
-  (-) = liftNondet2 (P.-)
-  (*) = liftNondet2 (P.*)
-  negate = liftNondet1 P.negate
-  abs    = liftNondet1 P.abs
-  signum = liftNondet1 P.signum
-  fromInteger = liftNondet1 P.fromInteger
+  (+) = liftTree2 (P.+)
+  (-) = liftTree2 (P.-)
+  (*) = liftTree2 (P.*)
+  negate = liftTree1 P.negate
+  abs    = liftTree1 P.abs
+  signum = liftTree1 P.signum
+  fromInteger = liftTree1 P.fromInteger
 
 instance NumND Integer where
-  (+) = liftNondet2 (P.+)
-  (-) = liftNondet2 (P.-)
-  (*) = liftNondet2 (P.*)
-  negate = liftNondet1 P.negate
-  abs    = liftNondet1 P.abs
-  signum = liftNondet1 P.signum
-  fromInteger = liftNondet1 P.fromInteger
+  (+) = liftTree2 (P.+)
+  (-) = liftTree2 (P.-)
+  (*) = liftTree2 (P.*)
+  negate = liftTree1 P.negate
+  abs    = liftTree1 P.abs
+  signum = liftTree1 P.signum
+  fromInteger = liftTree1 P.fromInteger
 
 instance NumND Float where
-  (+) = liftNondet2 (P.+)
-  (-) = liftNondet2 (P.-)
-  (*) = liftNondet2 (P.*)
-  negate = liftNondet1 P.negate
-  abs    = liftNondet1 P.abs
-  signum = liftNondet1 P.signum
-  fromInteger = liftNondet1 P.fromInteger
+  (+) = liftTree2 (P.+)
+  (-) = liftTree2 (P.-)
+  (*) = liftTree2 (P.*)
+  negate = liftTree1 P.negate
+  abs    = liftTree1 P.abs
+  signum = liftTree1 P.signum
+  fromInteger = liftTree1 P.fromInteger
 
 instance NumND Double where
-  (+) = liftNondet2 (P.+)
-  (-) = liftNondet2 (P.-)
-  (*) = liftNondet2 (P.*)
-  negate = liftNondet1 P.negate
-  abs    = liftNondet1 P.abs
-  signum = liftNondet1 P.signum
-  fromInteger = liftNondet1 P.fromInteger
+  (+) = liftTree2 (P.+)
+  (-) = liftTree2 (P.-)
+  (*) = liftTree2 (P.*)
+  negate = liftTree1 P.negate
+  abs    = liftTree1 P.abs
+  signum = liftTree1 P.signum
+  fromInteger = liftTree1 P.fromInteger
 
 -- * Lifted Fractional type class, instances and functions
 
@@ -528,27 +528,27 @@ instance NumND Double where
 class NumND a => FractionalND a where
   {-# MINIMAL fromRational, (recip | (/)) #-}
 
-  (/) :: Nondet (a --> a --> a)
+  (/) :: Tree (a --> a --> a)
   (/) = rtrnFunc $ \x -> rtrnFunc $ \y -> apply2 (*) x  (recip `app` y)
 
-  recip :: Nondet (a --> a)
+  recip :: Tree (a --> a)
   recip = rtrnFunc $ \x -> apply2 (/) (fromInteger `app` (P.return 1)) x
 
-  fromRational :: Nondet (RationalND --> a)
+  fromRational :: Tree (RationalND --> a)
 
 instance FractionalND Float where
-  (/) = liftNondet2 (P./)
+  (/) = liftTree2 (P./)
   fromRational = rtrnFunc $ \r -> P.fromRational P.<$> nf r
 
 instance FractionalND Double where
-  (/) = liftNondet2 (P./)
+  (/) = liftTree2 (P./)
   fromRational = rtrnFunc $ \r -> P.fromRational P.<$> nf r
 
 -- * Lifted Real type class, instances and functions
 
 -- | Lifted Real type class
 class (NumND a, OrdND a) => RealND a where
-  toRational :: Nondet (a --> RationalND)
+  toRational :: Tree (a --> RationalND)
 
 instance RealND Int where
   toRational = rtrnFunc $ \i -> P.return ((toInteger `app` i) :% (P.return 1))
@@ -566,13 +566,13 @@ instance RealND Double where
 
 -- | Lifted Integral type class
 class (RealND a, EnumND a) => IntegralND a where
-  quot      :: Nondet (a --> a --> a)
-  rem       :: Nondet (a --> a --> a)
-  div       :: Nondet (a --> a --> a)
-  mod       :: Nondet (a --> a --> a)
-  quotRem   :: Nondet (a --> a --> Tuple2ND a a)
-  divMod    :: Nondet (a --> a --> Tuple2ND a a)
-  toInteger :: Nondet (a --> Integer)
+  quot      :: Tree (a --> a --> a)
+  rem       :: Tree (a --> a --> a)
+  div       :: Tree (a --> a --> a)
+  mod       :: Tree (a --> a --> a)
+  quotRem   :: Tree (a --> a --> Tuple2ND a a)
+  divMod    :: Tree (a --> a --> Tuple2ND a a)
+  toInteger :: Tree (a --> Integer)
 
   quot   = rtrnFunc $ \n -> rtrnFunc $ \d -> fst `app` (apply2 quotRem n d)
   rem    = rtrnFunc $ \n -> rtrnFunc $ \d -> snd `app` (apply2 quotRem n d)
@@ -583,7 +583,7 @@ class (RealND a, EnumND a) => IntegralND a where
   divMod = P.undefined
 
 divModDefault :: (IntegralND a, ShareableN a)
-              => Nondet (a --> a --> Tuple2ND a a)
+              => Tree (a --> a --> Tuple2ND a a)
 divModDefault = rtrnFunc $ \n' -> rtrnFunc $ \d' ->
   share n' P.>>= \n -> share d' P.>>= \d ->
   let qr' = apply2 quotRem n d
@@ -597,23 +597,23 @@ divModDefault = rtrnFunc $ \n' -> rtrnFunc $ \d' ->
           else qr
 
 instance IntegralND Int where
-  quot = liftNondet2 (P.quot)
-  rem  = liftNondet2 (P.rem)
-  div  = liftNondet2 (P.div)
-  mod  = liftNondet2 (P.mod)
+  quot = liftTree2 (P.quot)
+  rem  = liftTree2 (P.rem)
+  div  = liftTree2 (P.div)
+  mod  = liftTree2 (P.mod)
 
   quotRem = rtrnFunc $ \a1 -> rtrnFunc $ \a2 -> liftE
     (P.quotRem P.<$> a1 P.<*> a2)
   divMod = rtrnFunc $ \a1 -> rtrnFunc $ \a2 -> liftE
     (P.divMod P.<$> a1 P.<*> a2)
 
-  toInteger = liftNondet1 (P.toInteger)
+  toInteger = liftTree1 (P.toInteger)
 
 instance IntegralND Integer where
-  quot = liftNondet2 (P.quot)
-  rem  = liftNondet2 (P.rem)
-  div  = liftNondet2 (P.div)
-  mod  = liftNondet2 (P.mod)
+  quot = liftTree2 (P.quot)
+  rem  = liftTree2 (P.rem)
+  div  = liftTree2 (P.div)
+  mod  = liftTree2 (P.mod)
 
   quotRem = rtrnFunc $ \a1 -> rtrnFunc $ \a2 -> liftE
     (P.quotRem P.<$> a1 P.<*> a2)
@@ -628,8 +628,8 @@ infixl 1 >>=, >>
 infixl 4 <$, <*, *>, <*>
 -- | Lifted Functor type class
 class FunctorND f where
-  fmap :: (ShareableN a, ShareableN b) => Nondet ((a --> b) --> f a --> f b)
-  (<$) :: (ShareableN a, ShareableN b) => Nondet (a --> f b --> f a)
+  fmap :: (ShareableN a, ShareableN b) => Tree ((a --> b) --> f a --> f b)
+  (<$) :: (ShareableN a, ShareableN b) => Tree (a --> f b --> f a)
   (<$) = rtrnFunc $ \a -> rtrnFunc $ \f ->
     apply2 fmap (const `app` a) f
 
@@ -644,22 +644,22 @@ instance FunctorND ListND where
 
 -- | Lifted Applicative type class
 class FunctorND f => ApplicativeND f where
-  pure :: ShareableN a => Nondet (a --> f a)
+  pure :: ShareableN a => Tree (a --> f a)
 
-  (<*>) :: (ShareableN a, ShareableN b) => Nondet (f (a --> b) --> f a --> f b)
+  (<*>) :: (ShareableN a, ShareableN b) => Tree (f (a --> b) --> f a --> f b)
   (<*>) = rtrnFunc $ \f -> rtrnFunc $ \a ->
-    apply3 liftA2 (liftNondet1 P.id) f a
+    apply3 liftA2 (liftTree1 P.id) f a
 
   liftA2 :: (ShareableN a, ShareableN b, ShareableN c)
-         => Nondet ((a --> b --> c) --> f a --> f b --> f c)
+         => Tree ((a --> b --> c) --> f a --> f b --> f c)
   liftA2 = rtrnFunc $ \f -> rtrnFunc $ \a -> rtrnFunc $ \b ->
     apply2 (<*>) (apply2 fmap f a) b
 
-  (*>) :: (ShareableN a, ShareableN b) => Nondet (f a --> f b --> f b)
+  (*>) :: (ShareableN a, ShareableN b) => Tree (f a --> f b --> f b)
   (*>) = rtrnFunc $ \a -> rtrnFunc $ \b ->
-    apply3 liftA2 (liftNondet2 (P.flip P.const)) a b
+    apply3 liftA2 (liftTree2 (P.flip P.const)) a b
 
-  (<*) :: (ShareableN a, ShareableN b) => Nondet (f a --> f b --> f a)
+  (<*) :: (ShareableN a, ShareableN b) => Tree (f a --> f b --> f a)
   (<*) = rtrnFunc $ \a -> rtrnFunc $ \b ->
     apply3 liftA2 const a b
   {-# MINIMAL pure, ((<*>) | liftA2) #-}
@@ -672,14 +672,14 @@ instance ApplicativeND ListND where
 
   -- | Lifted Alternative type class
 class ApplicativeND f => AlternativeND f where
-  empty :: ShareableN a => Nondet (f a)
-  (<|>) :: ShareableN a => Nondet (f a --> f a --> f a)
-  some  :: ShareableN a => Nondet (f a --> f (ListND a))
+  empty :: ShareableN a => Tree (f a)
+  (<|>) :: ShareableN a => Tree (f a --> f a --> f a)
+  some  :: ShareableN a => Tree (f a --> f (ListND a))
   some = rtrnFunc $ \v ->
     let many_v = apply2 (<|>) some_v (pure `app` (P.return Nil))
         some_v = apply3 liftA2 cons v many_v
     in some_v
-  many  :: ShareableN a => Nondet (f a --> f (ListND a))
+  many  :: ShareableN a => Tree (f a --> f (ListND a))
   many = rtrnFunc $ \v ->
     let many_v = apply2 (<|>) some_v (pure `app` (P.return Nil))
         some_v = apply3 liftA2 cons v many_v
@@ -691,11 +691,11 @@ instance AlternativeND ListND where
 
 -- | Lifted Monad type class
 class ApplicativeND m => MonadND m where
-  (>>=) :: (ShareableN a, ShareableN b) => Nondet (m a --> (a --> m b) --> m b)
-  (>>)  :: (ShareableN a, ShareableN b) => Nondet (m a --> m b --> m b)
+  (>>=) :: (ShareableN a, ShareableN b) => Tree (m a --> (a --> m b) --> m b)
+  (>>)  :: (ShareableN a, ShareableN b) => Tree (m a --> m b --> m b)
   (>>) = rtrnFunc $ \a -> rtrnFunc $ \b ->
     apply2 (>>=) a (rtrnFunc (P.const b))
-  return :: ShareableN a => Nondet (a --> m a)
+  return :: ShareableN a => Tree (a --> m a)
   return = pure
   {-# MINIMAL (>>=) #-}
 
@@ -706,7 +706,7 @@ instance MonadND ListND where
 
 -- | Lifted MonadFail type class
 class MonadND m => MonadFailND m where
-  fail :: ShareableN a => Nondet (StringND --> m a)
+  fail :: ShareableN a => Tree (StringND --> m a)
 
 instance MonadFailND ListND where
   fail = rtrnFunc $ \_ -> P.return Nil
@@ -715,32 +715,32 @@ instance MonadFailND ListND where
 
 -- | Lifted Enum type class
 class EnumND a where
-  succ :: Nondet (a --> a)
+  succ :: Tree (a --> a)
   succ = rtrnFunc $ \a ->
     toEnum `app` (apply2 (+) (P.return 1) (fromEnum `app` a))
-  pred :: Nondet (a --> a)
+  pred :: Tree (a --> a)
   pred = rtrnFunc $ \a ->
     toEnum `app` (apply2 (-) (P.return 1) (fromEnum `app` a))
 
-  toEnum   :: Nondet (Int --> a)
-  fromEnum :: Nondet (a --> Int)
+  toEnum   :: Tree (Int --> a)
+  fromEnum :: Tree (a --> Int)
 
-  enumFrom       :: Nondet (a             --> ListND a)
+  enumFrom       :: Tree (a             --> ListND a)
   enumFrom       = rtrnFunc $ \x1 ->
     apply2 map toEnum (enumFrom `app`
       (fromEnum `app` x1))
 
-  enumFromThen   :: Nondet (a --> a       --> ListND a)
+  enumFromThen   :: Tree (a --> a       --> ListND a)
   enumFromThen   = rtrnFunc $ \x1 -> rtrnFunc $ \x2 ->
     apply2 map toEnum (apply2 enumFromThen
       (fromEnum `app` x1) (fromEnum `app` x2))
 
-  enumFromTo     :: Nondet (a       --> a --> ListND a)
+  enumFromTo     :: Tree (a       --> a --> ListND a)
   enumFromTo     = rtrnFunc $ \x1 ->                   rtrnFunc $ \x3 ->
     apply2 map toEnum (apply2 enumFromTo
       (fromEnum `app` x1)                      (fromEnum `app` x3))
 
-  enumFromThenTo :: Nondet (a --> a --> a --> ListND a)
+  enumFromThenTo :: Tree (a --> a --> a --> ListND a)
   enumFromThenTo = rtrnFunc $ \x1 -> rtrnFunc $ \x2 -> rtrnFunc $ \x3 ->
     apply2 map toEnum (apply3 enumFromThenTo
       (fromEnum `app` x1) (fromEnum `app` x2) (fromEnum `app` x3))
@@ -795,15 +795,15 @@ instance EnumND Integer where
 
 -- | Lifted Bounded type class
 class BoundedND a where
-  minBound :: Nondet a
-  maxBound :: Nondet a
+  minBound :: Tree a
+  maxBound :: Tree a
 
 instance BoundedND Int where
   minBound = P.return P.minBound
   maxBound = P.return P.maxBound
 
 class IsStringND a where
-  fromString :: Nondet (StringND --> a)
+  fromString :: Tree (StringND --> a)
 
 instance (a ~ Char) => IsStringND (ListND a) where
   fromString = rtrnFunc $ \x -> x
