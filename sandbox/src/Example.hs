@@ -2,20 +2,11 @@
 {-# LANGUAGE NoImplicitPrelude              #-}
 module Example where
 
-import Plugin.CurryPlugin.Prelude
+import Plugin.CurryPlugin.Prelude hiding (not)
 
-permutations :: [a] -> [a]
-permutations []     = []
-permutations (x:xs) = insert x (permutations xs)
-  where
-    insert e []     = [e]
-    insert e (y:ys) = (e:y:ys) ? (y : insert e ys)
+not :: Bool -> Bool
+not True  = False
+not False = True
 
-data MyBool = F | T
-
-myNot :: MyBool -> MyBool
-myNot T = F
-myNot F = T
-
-not2 :: MyBool -> MyBool
-not2 x = myNot (myNot x)
+notTwice :: Bool -> Bool
+notTwice x = not (not x)
