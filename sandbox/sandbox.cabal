@@ -43,10 +43,18 @@ executable sandbox
 --    -funfolding-keeness-factor=30
 --    -funfolding-fun-discount=1200
 --    -funfolding-dict-discount=600
---    -ddump-simpl-stats -ddump-rule-firings
+--    -ddump-simpl-stats
+--    -ddump-rule-firings
 --    -ddump-ds
     -ddump-simpl
 --    -ddump-prep
---    -ddump-inlinings -dverbose-core2core
+--    -ddump-inlinings
+--    -dverbose-core2core
     -dsuppress-all
+--    -dno-suppress-type-signatures
+--    -ddump-to-file
     -fforce-recomp
+--    -fenable-rewrite-rules
+    -fno-full-laziness
+    -fno-float-in
+--    -fno-do-lambda-eta-expansion

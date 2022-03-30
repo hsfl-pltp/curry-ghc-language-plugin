@@ -1,80 +1,127 @@
-{-# LANGUAGE TypeOperators              #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE DeriveFunctor              #-}
-{-# LANGUAGE UndecidableInstances       #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE DeriveLift                 #-}
-{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveLift #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE DeriveFunctor   #-}
-{-# LANGUAGE TypeFamilies    #-}
-{-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE ViewPatterns    #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedLists #-}
-{-|
-Module      : Plugin.CurryPlugin.Monad
-Description : Convenience wrapper for the effect
-Copyright   : (c) Kai-Oliver Prott (2020)
-Maintainer  : kai.prott@hotmail.de
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
-This module contains the actual monad used by the plugin and a few
-convenicence functions.
-The monad type is a wrapper over the
-'Lazy' type from 'Plugin.Effect.CurryEffect'.
--}
+-- |
+-- Module      : Plugin.CurryPlugin.Monad
+-- Description : Convenience wrapper for the effect
+-- Copyright   : (c) Kai-Oliver Prott (2020)
+-- Maintainer  : kai.prott@hotmail.de
+--
+-- This module contains the actual monad used by the plugin and a few
+-- convenicence functions.
+-- The monad type is a wrapper over the
+-- 'Lazy' type from 'Plugin.Effect.CurryEffect'.
 module Plugin.CurryPlugin.Monad
-  ( Tree(..), type (-->)(..), (?), failed, share
-  , SearchMode(..)
-  , Normalform(..), modeOp, allValues, allValuesNF
-  , NondetTag(..)
-  , liftTree1, liftTree2
-  , app, apply2, apply2Unlifted, apply3
-  , bind, rtrn, rtrnFunc, fmp, shre, shreTopLevel, seqValue
-  , rtrnFuncUnsafePoly, appUnsafePoly )
-  where
+  ( Tree (..),
+    type (-->) (..),
+    (?),
+    failed,
+    share,
+    SearchMode (..),
+    Normalform (..),
+    modeOp,
+    allValues,
+    allValuesNF,
+    NondetTag (..),
+    liftTree1,
+    liftTree2,
+    app,
+    apply2,
+    apply2Unlifted,
+    apply3,
+    bind,
+    rtrn,
+    rtrnFunc,
+    fmp,
+    shre,
+    shreTopLevel,
+    seqValue,
+    rtrnFuncUnsafePoly,
+    appUnsafePoly,
+  )
+where
 
-import Language.Haskell.TH.Syntax hiding (Q)
-import Control.Applicative
-import Control.Monad
-import Unsafe.Coerce
-
-import Plugin.Effect.Classes
 -- import Plugin.CurryPlugin.Tree
-import Plugin.Effect.Annotation
-import Plugin.Effect.Transformers
 
 -- imports from Tree module
-import Control.Monad
+
 import Control.Applicative
+import Control.Monad
 import GHC.Exts
+import Language.Haskell.TH.Syntax hiding (Q)
+import Plugin.Effect.Annotation
+import Plugin.Effect.Classes
+import Plugin.Effect.Transformers
+import Unsafe.Coerce
 
 -- | Nondeterministic can be represented as trees, where results are
 -- annotated at the leaves and nodes correspond to choices.
-data Tree a = Failed
-            | Leaf a
-            | Choice (Tree a) (Tree a)
+data Tree a
+  = Failed
+  | Leaf a
+  | Choice (Tree a) (Tree a)
   deriving (Show, Functor)
 
 instance Applicative Tree where
-  pure = Leaf
-  Failed       <*> _ = Failed
-  Leaf f       <*> t = fmap f t
+  pure a = build' (\_ leaf _ -> leaf a)
+  {-# INLINE pure #-}
+  Failed <*> _ = Failed
+  Leaf f <*> t = fmap f t
   Choice tl tr <*> t = Choice (tl <*> t) (tr <*> t)
 
 instance Alternative Tree where
   empty = Failed
   (<|>) = Choice
 
+build' :: forall a. (forall b. b -> (a -> b) -> (b -> b -> b) -> b) -> Tree a
+build' g = g Failed Leaf Choice
+{-# NOINLINE build' #-}
+
+fold :: b -> (a -> b) -> (b -> b -> b) -> Tree a -> b
+fold failed' _ _ Failed = failed'
+fold _ leaf _ (Leaf a) = leaf a
+fold failed' leaf choice (Choice leftTree rightTree) =
+  choice
+    (fold failed' leaf choice leftTree)
+    (fold failed' leaf choice rightTree)
+{-# NOINLINE fold #-}
+
 instance Monad Tree where
-  Failed       >>= _ = Failed
-  Leaf a       >>= f = f a
-  Choice tl tr >>= f = Choice (tl >>= f) (tr >>= f)
+  tree >>= f =
+    build'
+      ( \failed' leaf choice ->
+          fold
+            failed'
+            (fold failed' leaf choice . f)
+            choice
+            tree
+      )
+  {-# INLINE (>>=) #-}
+
+{-# RULES
+"treeFold/treeBuild" forall
+  failed'
+  leaf
+  choice
+  (g :: forall b. b -> (a -> b) -> (b -> b -> b) -> b).
+  fold failed' leaf choice (build' g) =
+    g failed' leaf choice
+  #-}
 
 instance MonadFail Tree where
   fail _ = Failed
@@ -89,19 +136,18 @@ instance MonadPlus Tree where
 dfs :: Tree a -> [a]
 dfs t = dfs' t []
   where
-    dfs' (Leaf a)       = (a:)
+    dfs' (Leaf a) = (a :)
     dfs' (Choice t1 t2) = dfs' t1 . dfs' t2
-    dfs' Failed         = id
-
+    dfs' Failed = id
 
 -- | Breadth-first traversal of a choice tree to collect results into a list.
 bfs :: Tree a -> [a]
 bfs t = bfs' [t]
   where
-    bfs' (Leaf   a     :< q) = a : bfs' q
+    bfs' (Leaf a :< q) = a : bfs' q
     bfs' (Choice t1 t2 :< q) = bfs' (t2 :< t1 :< q)
-    bfs' (Failed       :< q) = bfs' q
-    bfs' Nil                 = []
+    bfs' (Failed :< q) = bfs' q
+    bfs' Nil = []
 
 ---------------------------------------
 -- Queue Implementation
@@ -113,13 +159,18 @@ data Queue a = Q [a] [a]
 {-# COMPLETE (:<), Nil #-}
 
 infixr 5 :<
+
 pattern (:<) :: a -> Queue a -> Queue a
-pattern x :< xs <- (uncons -> Just (x, xs)) where
-  x :< xs = enqueue x xs
+pattern x :< xs <-
+  (uncons -> Just (x, xs))
+  where
+    x :< xs = enqueue x xs
 
 pattern Nil :: Queue a
-pattern Nil <- (uncons -> Nothing) where
-  Nil = emptyQueue
+pattern Nil <-
+  (uncons -> Nothing)
+  where
+    Nil = emptyQueue
 
 instance IsList (Queue a) where
   type Item (Queue a) = a
@@ -127,7 +178,7 @@ instance IsList (Queue a) where
   toList (Q xs ys) = xs ++ reverse ys
 
 instance Semigroup (Queue a) where
-  Q []  _   <> q         = q
+  Q [] _ <> q = q
   Q xs1 ys1 <> Q xs2 ys2 = Q xs1 (ys1 ++ reverse xs2 ++ ys2)
 
 instance Monoid (Queue a) where
@@ -137,24 +188,23 @@ emptyQueue :: Queue a
 emptyQueue = Q [] []
 
 enqueue :: a -> Queue a -> Queue a
-enqueue x (Q xs ys) = queue xs (x:ys)
+enqueue x (Q xs ys) = queue xs (x : ys)
 
 uncons :: Queue a -> Maybe (a, Queue a)
 uncons q = (,) <$> peek q <*> dequeue q
 
 peek :: Queue a -> Maybe a
-peek (Q (x:_) _) = Just x
-peek _           = Nothing
+peek (Q (x : _) _) = Just x
+peek _ = Nothing
 
 dequeue :: Queue a -> Maybe (Queue a)
-dequeue (Q (_:xs) ys) = Just (queue xs ys)
-dequeue _             = Nothing
+dequeue (Q (_ : xs) ys) = Just (queue xs ys)
+dequeue _ = Nothing
 
 -- Invariant: If the first list is empty, then also the second list is empty.
 queue :: [a] -> [a] -> Queue a
 queue [] ys = Q (reverse ys) []
 queue xs ys = Q xs ys
-
 
 -- Here starts the original Nondet module
 
@@ -163,26 +213,25 @@ queue xs ys = Q xs ys
 --   deriving (Functor, Applicative, Monad, Alternative, MonadPlus, Sharing)
 --     via LazyT Nondet Tree
 --   deriving anyclass (SharingTop)
-
 instance Sharing Tree where
   share = return
 
 instance SharingTop Tree where
   shareTopLevel _ = id
 
-{-# INLINE[0] bind #-}
+{-# INLINE [0] bind #-}
 bind :: Tree a -> (a -> Tree b) -> Tree b
 bind = (>>=)
 
-{-# INLINE[0] rtrn #-}
+{-# INLINE [0] rtrn #-}
 rtrn :: a -> Tree a
 rtrn = pure
 
-{-# INLINE[0] rtrnFunc #-}
+{-# INLINE [0] rtrnFunc #-}
 rtrnFunc :: (Tree a -> Tree b) -> Tree (a --> b)
 rtrnFunc = pure
 
-{-# INLINE[0] app #-}
+{-# INLINE [0] app #-}
 app :: Tree (a --> b) -> Tree a -> Tree b
 app mf ma = mf >>= \f -> f ma
 
@@ -200,23 +249,23 @@ app mf ma = mf >>= \f -> f ma
 -- is (forall x. m blah') and not m (forall x. blah').
 -- To remedy this, we provide the following two functions using unsafeCoerce to
 -- accomodate such a RankN type.
-{-# INLINE[0] rtrnFuncUnsafePoly #-}
+{-# INLINE [0] rtrnFuncUnsafePoly #-}
 rtrnFuncUnsafePoly :: forall a b a'. (a' -> Tree b) -> Tree (a --> b)
 rtrnFuncUnsafePoly f = pure (unsafeCoerce f :: Tree a -> Tree b)
 
-{-# INLINE[0] appUnsafePoly #-}
+{-# INLINE [0] appUnsafePoly #-}
 appUnsafePoly :: forall a b a'. Tree (a --> b) -> a' -> Tree b
 appUnsafePoly mf ma = mf >>= \f -> (unsafeCoerce f :: a' -> Tree b) ma
 
-{-# INLINE[0] fmp #-}
+{-# INLINE [0] fmp #-}
 fmp :: (a -> b) -> Tree a -> Tree b
 fmp = fmap
 
-{-# INLINE[0] shre #-}
+{-# INLINE [0] shre #-}
 shre :: Shareable Tree a => Tree a -> Tree (Tree a)
 shre = share
 
-{-# INLINE[0] shreTopLevel #-}
+{-# INLINE [0] shreTopLevel #-}
 shreTopLevel :: (Int, String) -> Tree a -> Tree a
 shreTopLevel = shareTopLevel
 
@@ -225,25 +274,31 @@ seqValue :: Tree a -> Tree b -> Tree b
 seqValue a b = a >>= \a' -> a' `seq` b
 
 {-# RULES
-"bind/rtrn"    forall f x. bind (rtrn x) f = f x
+"bind/rtrn" forall f x. bind (rtrn x) f = f x
 "shreTopLevel" forall x i. shreTopLevel i x = x
   #-}
-  -- "bind/rtrn'let"   forall e x. let b = e in rtrn x = rtrn (let b = e in x)
+
+-- "bind/rtrn'let"   forall e x. let b = e in rtrn x = rtrn (let b = e in x)
 
 -- | Treeerministic failure
 failed :: Shareable Tree a => Tree a
 failed = mzero
 
 infixr 0 ?
+
 {-# INLINE (?) #-}
+
 -- | Treeerministic choice
 (?) :: Shareable Tree a => Tree (a --> a --> a)
 (?) = rtrnFunc $ \t1 -> rtrnFunc $ \t2 -> t1 `mplus` t2
 
 -- | Enumeration of available search modes.
-data SearchMode = DFS -- ^ depth-first search
-                | BFS -- ^ breadth-first search
-  deriving Lift
+data SearchMode
+  = -- | depth-first search
+    DFS
+  | -- | breadth-first search
+    BFS
+  deriving (Lift)
 
 -- | Function to map the search type to the function implementing it.
 modeOp :: SearchMode -> Tree a -> [a]
@@ -252,8 +307,10 @@ modeOp BFS = bfs
 
 -- | Collect the results of a nondeterministic computation
 -- as their normal form in a tree.
-allValuesNF :: Normalform Tree a b
-            => Tree a -> Tree b
+allValuesNF ::
+  Normalform Tree a b =>
+  Tree a ->
+  Tree b
 allValuesNF = allValues . nf
 
 -- | Collect the results of a nondeterministic computation in a tree.
@@ -261,15 +318,18 @@ allValues :: Tree a -> Tree a
 allValues = id
 
 infixr 0 -->
+
 type a --> b = Tree a -> Tree b
 
-instance (Normalform Tree a1 a2, Normalform Tree b1 b2)
-  => Normalform Tree (a1 --> b1) (a2 -> b2) where
-    nf    mf =
-      mf >> return (error "Plugin Error: Cannot capture function types")
-    liftE mf = do
-      f <- mf
-      return (liftE . fmap f . nf)
+instance
+  (Normalform Tree a1 a2, Normalform Tree b1 b2) =>
+  Normalform Tree (a1 --> b1) (a2 -> b2)
+  where
+  nf mf =
+    mf >> return (error "Plugin Error: Cannot capture function types")
+  liftE mf = do
+    f <- mf
+    return (liftE . fmap f . nf)
 
 -- | Lift a unary function with the lifting scheme of the plugin.
 liftTree1 :: (a -> b) -> Tree (a --> b)
@@ -277,8 +337,14 @@ liftTree1 f = rtrnFunc (\a -> a >>= \a' -> return (f a'))
 
 -- | Lift a 2-ary function with the lifting scheme of the plugin.
 liftTree2 :: (a -> b -> c) -> Tree (a --> b --> c)
-liftTree2 f = rtrnFunc (\a  -> rtrnFunc (\b  ->
-                a >>=  \a' -> b >>=     \b' -> return (f a' b')))
+liftTree2 f =
+  rtrnFunc
+    ( \a ->
+        rtrnFunc
+          ( \b ->
+              a >>= \a' -> b >>= \b' -> return (f a' b')
+          )
+    )
 
 -- | Apply a lifted 2-ary function to its lifted arguments.
 apply2 :: Tree (a --> b --> c) -> Tree a -> Tree b -> Tree c
@@ -286,11 +352,18 @@ apply2 f a b = app f a >>= \f' -> f' b
 
 -- | Apply a lifted 2-ary function to its arguments, where just the
 -- first argument has to be lifted.
-apply2Unlifted :: Tree (a --> b --> c)
-               -> Tree a -> b -> Tree c
+apply2Unlifted ::
+  Tree (a --> b --> c) ->
+  Tree a ->
+  b ->
+  Tree c
 apply2Unlifted f a b = app f a >>= \f' -> f' (return b)
 
 -- | Apply a lifted 3-ary function to its lifted arguments.
-apply3 :: Tree (a --> b --> c --> d)
-       -> Tree a -> Tree b -> Tree c -> Tree d
+apply3 ::
+  Tree (a --> b --> c --> d) ->
+  Tree a ->
+  Tree b ->
+  Tree c ->
+  Tree d
 apply3 f a b c = apply2 f a b >>= \f' -> f' c
