@@ -29,6 +29,7 @@ import GHC.Hs.Lit
 import GHC.Hs.Type
 import GHC.Hs.Expr
 import GHC.Core.TyCo.Rep
+import GHC.Core.Opt.Arity (typeArity)
 import GHC.Types.Id.Make
 import GHC.Types.TypeEnv
 import GHC.Types.Tickish
@@ -126,9 +127,9 @@ liftMonadicBinding lcl _ given tcs _ (FunBind wrap (L b name) eqs ticks) =
   return ([FunBind fullwrap (L b name') eqs' ticks'], [])
   where
     replaceEv ev = setVarType ev <$> replaceTyconTy tcs (varType ev)
-liftMonadicBinding lcl _ given tcs _ (AbsBinds a b c d e f g)
+liftMonadicBinding lcl _ given tcs _ (AbsBinds a b c exports e f g)
   -- we do not want to lift dicts or record selectors or other system stuff here
-  | all (noSystemNameOrRec . abe_poly) d = do
+  | all (noSystemNameOrRec . abe_poly) exports = do
 
   -- create the dictionary variables
   stc <- getShareClassTycon
@@ -146,7 +147,7 @@ liftMonadicBinding lcl _ given tcs _ (AbsBinds a b c d e f g)
   let given' = given ++ cts
 
 
-  (d', vs) <- unzip <$> mapM liftEx d
+  (exports', vs) <- unzip <$> mapM liftEx exports
   let vs' = catMaybes vs
 
   -- lift inner bindings
@@ -162,7 +163,7 @@ liftMonadicBinding lcl _ given tcs _ (AbsBinds a b c d e f g)
   vs'' <- mapM (\(v1,v2,v3) -> (,,v3)
                     <$> (setVarType v1 <$> liftTypeTcM tcs (varType v1))
                     <*> (setVarType v2 <$> liftTypeTcM tcs (varType v2))) vs'
-  return ([AbsBinds a b allEvs d' e' f' g], map (getLocFrom bs) vs'')
+  return ([AbsBinds a b allEvs exports' e' f' g], map (getLocFrom bs) vs'')
   where
     bindingVarMaybe :: HsBindLR GhcTc GhcTc -> Maybe (LocatedN Var)
     bindingVarMaybe (FunBind _ name _ _) = Just name
@@ -246,8 +247,13 @@ liftMonadicBinding lcl _ given tcs _ (AbsBinds a b c d e f g)
       -- also (possibly) change unique for sharing
       let v1u = setVarUnique v1' u
 
-      return ( ABE x v1u v2' (conwrap <.> (conapp <.> rest)) p
-             , Just (setVarUnique v1 u, v1, v2) )
+      -- Inline pragmas contain the arity of the original source code
+      -- We set the arity in the inline pragmas to the arity of the new types of the variables
+      let v1Inline = modifyInlinePragma v1u (\pragma -> pragma { inl_sat = Just (length (typeArity ty1)) })
+      let v2Inline = modifyInlinePragma v2' (\pragma -> pragma { inl_sat = Just (length (typeArity ty2)) })
+
+      return ( ABE x v1Inline v2Inline (conwrap <.> (conapp <.> rest)) p
+             , Just (setVarUnique v1 u, v1', v2') )
 
     -- Do not lift any system stuff, except instance fun definitions ($c) and
     -- class default methods ($dm).
@@ -262,17 +268,17 @@ liftMonadicBinding lcl _ given tcs _ (AbsBinds a b c d e f g)
 
     flattenEv (TcEvBinds _) = []
     flattenEv (EvBinds ebs) = bagToList ebs
-    isExportedEv (EvBind v _ _) = any ((==v) . abe_mono) d
-liftMonadicBinding _ _ _ tcs clsInsts bind@(AbsBinds _ _ _ d _ _ _)
-  | all (isDictFun . abe_poly) d =
+    isExportedEv (EvBind v _ _) = any ((==v) . abe_mono) exports
+liftMonadicBinding _ _ _ tcs clsInsts bind@(AbsBinds _ _ _ exports _ _ _)
+  | all (isDictFun . abe_poly) exports =
     maybe ([bind], []) ((,[]) . (:[]))
       <$> liftDictInstFun bind tcs clsInsts
   where
     isDictFun v = case occNameString (occName v) of
       '$':'f':_ -> True
       _         -> False
-liftMonadicBinding _ _ _ tcs _ bind@(AbsBinds _ _ _ d _ _ _)
-  | all (isRecordSelector . abe_poly) d =
+liftMonadicBinding _ _ _ tcs _ bind@(AbsBinds _ _ _ exports _ _ _)
+  | all (isRecordSelector . abe_poly) exports =
     maybe ([bind], []) ((,[]) . (:[bind])) -- do not throw away the old selector
       <$> liftRecordSel tcs bind
 liftMonadicBinding _ _ _ tcs _ (VarBind x1 name e1)
