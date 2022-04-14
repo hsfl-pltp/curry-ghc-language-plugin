@@ -44,7 +44,7 @@ executable sandbox
 --    -funfolding-fun-discount=1200
 --    -funfolding-dict-discount=600
 --    -ddump-simpl-stats
---    -ddump-rule-firings
+    -ddump-rule-firings
 --    -ddump-ds
     -ddump-simpl
 --    -ddump-prep
@@ -56,5 +56,6 @@ executable sandbox
     -fforce-recomp
 --    -fenable-rewrite-rules
     -fno-full-laziness
-    -fno-float-in
+--    -fno-float-in
 --    -fno-do-lambda-eta-expansion
+    -j1

@@ -15,6 +15,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -fno-full-laziness #-}
 
 -- |
 -- Module      : Plugin.CurryPlugin.Monad
@@ -90,7 +91,7 @@ instance Alternative Tree where
 
 build' :: forall a. (forall b. b -> (a -> b) -> (b -> b -> b) -> b) -> Tree a
 build' g = g Failed Leaf Choice
-{-# NOINLINE build' #-}
+{-# NOINLINE [1] build' #-}
 
 fold :: b -> (a -> b) -> (b -> b -> b) -> Tree a -> b
 fold failed' _ _ Failed = failed'
@@ -99,7 +100,7 @@ fold failed' leaf choice (Choice leftTree rightTree) =
   choice
     (fold failed' leaf choice leftTree)
     (fold failed' leaf choice rightTree)
-{-# NOINLINE fold #-}
+{-# NOINLINE [1] fold #-}
 
 instance Monad Tree where
   tree >>= f =
@@ -113,8 +114,10 @@ instance Monad Tree where
       )
   {-# INLINE (>>=) #-}
 
+{- RULES build g = g Failed Leaf Choice -}
+
 {-# RULES
-"treeFold/treeBuild" forall
+"treefold/treeBuild" forall
   failed'
   leaf
   choice
@@ -124,11 +127,11 @@ instance Monad Tree where
   #-}
 
 instance MonadFail Tree where
-  fail _ = Failed
+  fail _ = build' (\failed _ _ -> failed)
 
 instance MonadPlus Tree where
-  mzero = Failed
-  mplus = Choice
+  mzero = build' (\failed _ _ -> failed)
+  mplus arg1 arg2 = build' (\failed leaf choice -> choice (fold failed leaf choice arg1) (fold failed leaf choice arg2))
 
 -- * Search algorithms
 
@@ -219,19 +222,19 @@ instance Sharing Tree where
 instance SharingTop Tree where
   shareTopLevel _ = id
 
-{-# INLINE [0] bind #-}
+{-# INLINE bind #-}
 bind :: Tree a -> (a -> Tree b) -> Tree b
 bind = (>>=)
 
-{-# INLINE [0] rtrn #-}
+{-# INLINE rtrn #-}
 rtrn :: a -> Tree a
 rtrn = pure
 
-{-# INLINE [0] rtrnFunc #-}
+{-# INLINE rtrnFunc #-}
 rtrnFunc :: (Tree a -> Tree b) -> Tree (a --> b)
 rtrnFunc = pure
 
-{-# INLINE [0] app #-}
+{-# INLINE app #-}
 app :: Tree (a --> b) -> Tree a -> Tree b
 app mf ma = mf >>= \f -> f ma
 
@@ -249,23 +252,23 @@ app mf ma = mf >>= \f -> f ma
 -- is (forall x. m blah') and not m (forall x. blah').
 -- To remedy this, we provide the following two functions using unsafeCoerce to
 -- accomodate such a RankN type.
-{-# INLINE [0] rtrnFuncUnsafePoly #-}
+{-# INLINE rtrnFuncUnsafePoly #-}
 rtrnFuncUnsafePoly :: forall a b a'. (a' -> Tree b) -> Tree (a --> b)
 rtrnFuncUnsafePoly f = pure (unsafeCoerce f :: Tree a -> Tree b)
 
-{-# INLINE [0] appUnsafePoly #-}
+{-# INLINE appUnsafePoly #-}
 appUnsafePoly :: forall a b a'. Tree (a --> b) -> a' -> Tree b
 appUnsafePoly mf ma = mf >>= \f -> (unsafeCoerce f :: a' -> Tree b) ma
 
-{-# INLINE [0] fmp #-}
+{-# INLINE fmp #-}
 fmp :: (a -> b) -> Tree a -> Tree b
 fmp = fmap
 
-{-# INLINE [0] shre #-}
+{-# INLINE shre #-}
 shre :: Shareable Tree a => Tree a -> Tree (Tree a)
 shre = share
 
-{-# INLINE [0] shreTopLevel #-}
+{-# INLINE shreTopLevel #-}
 shreTopLevel :: (Int, String) -> Tree a -> Tree a
 shreTopLevel = shareTopLevel
 
