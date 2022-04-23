@@ -81,13 +81,13 @@ data Tree a
 instance Applicative Tree where
   pure a = build' (\_ leaf _ -> leaf a)
   {-# INLINE pure #-}
-  Failed <*> _ = Failed
+  Failed <*> _ = build' (\failed' _ _ -> failed')
   Leaf f <*> t = fmap f t
-  Choice tl tr <*> t = Choice (tl <*> t) (tr <*> t)
+  Choice tl tr <*> t = build' (\failed' leaf choice -> choice (fold failed' leaf choice (tl <*> t)) (fold failed' leaf choice (tr <*> t)))
 
 instance Alternative Tree where
-  empty = Failed
-  (<|>) = Choice
+  empty = build' (\failed' _ _ -> failed')
+  tl <|> tr = build' (\failed' leaf choice -> choice (fold failed' leaf choice tl) (fold failed' leaf choice tr))
 
 build' :: forall a. (forall b. b -> (a -> b) -> (b -> b -> b) -> b) -> Tree a
 build' g = g Failed Leaf Choice
@@ -114,10 +114,8 @@ instance Monad Tree where
       )
   {-# INLINE (>>=) #-}
 
-{- RULES build g = g Failed Leaf Choice -}
-
 {-# RULES
-"treefold/treeBuild" forall
+"treeFold/treeBuild" forall
   failed'
   leaf
   choice
@@ -268,7 +266,7 @@ fmp = fmap
 shre :: Shareable Tree a => Tree a -> Tree (Tree a)
 shre = share
 
-{-# INLINE shreTopLevel #-}
+{-# INLINE [0] shreTopLevel #-}
 shreTopLevel :: (Int, String) -> Tree a -> Tree a
 shreTopLevel = shareTopLevel
 

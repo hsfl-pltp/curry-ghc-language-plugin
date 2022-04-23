@@ -1,4 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# OPTIONS_GHC -fno-full-laziness #-}
 {-# OPTIONS_GHC -fplugin Plugin.CurryPlugin #-}
 
 module Example where

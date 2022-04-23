@@ -20,15 +20,19 @@ common deps
 library
   import: deps
   exposed-modules:
-    Example
+    -- Example
     -- Example2
+    Example3
     -- Main
 
 executable sandbox
   import: deps
+  build-depends:
+    criterion
   other-modules:
-    Example
---     Example2
+--    Example
+--    Example2
+    Example3
   main-is: Main.hs
   ghc-options:
 --    -fspecialise-aggressively
@@ -44,18 +48,18 @@ executable sandbox
 --    -funfolding-fun-discount=1200
 --    -funfolding-dict-discount=600
 --    -ddump-simpl-stats
-    -ddump-rule-firings
+--    -ddump-rule-firings
 --    -ddump-ds
-    -ddump-simpl
+--    -ddump-simpl
 --    -ddump-prep
 --    -ddump-inlinings
 --    -dverbose-core2core
     -dsuppress-all
 --    -dno-suppress-type-signatures
 --    -ddump-to-file
-    -fforce-recomp
+--    -fforce-recomp
 --    -fenable-rewrite-rules
-    -fno-full-laziness
+--    -fno-full-laziness
 --    -fno-float-in
 --    -fno-do-lambda-eta-expansion
     -j1
