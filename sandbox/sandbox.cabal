@@ -33,6 +33,7 @@ executable sandbox
 --    Example
 --    Example2
     Example3
+--    Example4
   main-is: Main.hs
   ghc-options:
 --    -fspecialise-aggressively
@@ -54,7 +55,7 @@ executable sandbox
 --    -ddump-prep
 --    -ddump-inlinings
 --    -dverbose-core2core
-    -dsuppress-all
+--    -dsuppress-all
 --    -dno-suppress-type-signatures
 --    -ddump-to-file
 --    -fforce-recomp
@@ -62,4 +63,4 @@ executable sandbox
 --    -fno-full-laziness
 --    -fno-float-in
 --    -fno-do-lambda-eta-expansion
-    -j1
+--    -j1

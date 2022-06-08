@@ -1,8 +1,8 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# OPTIONS_GHC -fno-full-laziness #-}
+{- OPTIONS_GHC -fno-full-laziness #-}
 {-# OPTIONS_GHC -fplugin Plugin.CurryPlugin #-}
 
-module Example3 (fib, notTwice, roundTripRSA) where
+module Example3 (fib, notTwice, notALot, roundTripRSA, nqueens, sort) where
 
 import Plugin.CurryPlugin.Prelude hiding (not)
 
@@ -18,9 +18,53 @@ fib n = fib (n - 1) + fib (n - 2)
 not' :: Bool -> Bool
 not' False = True
 not' True = False
+{-# INLINE not' #-}
 
 notTwice :: Bool -> Bool
 notTwice x = not' (not' x)
+
+notALot :: Bool -> Bool
+notALot x =
+  not'
+    ( not'
+        ( not'
+            ( not'
+                ( not'
+                    ( not'
+                        ( not'
+                            ( not'
+                                ( not'
+                                    ( not'
+                                        ( not'
+                                            ( not'
+                                                ( not'
+                                                    ( not'
+                                                        ( not'
+                                                            ( not'
+                                                                ( not'
+                                                                    ( not'
+                                                                        ( not'
+                                                                            ( not'
+                                                                                (not' x)
+                                                                            )
+                                                                        )
+                                                                    )
+                                                                )
+                                                            )
+                                                        )
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
 
 ----------- RSA -----------
 
@@ -172,3 +216,40 @@ elemIndex value (a : as)
   | otherwise =
       let index = elemIndex value as
        in if index == -1 then index else index + 1
+
+--------n queens----------
+nqueens :: Int -> Int
+nqueens nq = length (gen nq)
+  where
+    safe :: Int -> Int -> [Int] -> Bool
+    safe x d [] = True
+    safe x d (q : l) = x /= q && x /= q + d && x /= q - d && safe x (d + 1) l
+
+    gen :: Int -> [[Int]]
+    gen 0 = [[]]
+    gen n = [(q : b) | b <- gen (n - 1), q <- [1 .. nq], safe q 1 b]
+
+-----Sorting by permutation------
+ndinsert :: a -> [a] -> [a]
+ndinsert x [] = [x]
+ndinsert x (y : ys) = (x : y : ys) ? (y : ndinsert x ys)
+
+-- A permutations of a list can be obtained by non-deterministically
+-- inserting the first element into some permutation of the
+-- remaining elements
+perm :: [a] -> [a]
+perm [] = []
+perm (x : xs) = ndinsert x (perm xs)
+
+-- Next we define a partial predicate which evaluates to True
+-- if the argument list is sorte, i.e., if all elements are in ascending order.
+sorted :: Ord a => [a] -> Bool
+sorted [] = True
+sorted [_] = True
+sorted (x : y : ys) | x <= y = sorted (y : ys)
+
+-- Sorting a list means finding a sorted permutation of it:
+sort :: Ord a => [a] -> [a]
+sort xs | sorted ys = ys
+  where
+    ys = perm xs

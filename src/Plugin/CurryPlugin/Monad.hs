@@ -15,14 +15,12 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
-{-# OPTIONS_GHC -fno-full-laziness #-}
 
 -- |
 -- Module      : Plugin.CurryPlugin.Monad
 -- Description : Convenience wrapper for the effect
 -- Copyright   : (c) Kai-Oliver Prott (2020)
 -- Maintainer  : kai.prott@hotmail.de
---
 -- This module contains the actual monad used by the plugin and a few
 -- convenicence functions.
 -- The monad type is a wrapper over the
@@ -79,57 +77,26 @@ data Tree a
   deriving (Show, Functor)
 
 instance Applicative Tree where
-  pure a = build' (\_ leaf _ -> leaf a)
-  {-# INLINE pure #-}
-  Failed <*> _ = build' (\failed' _ _ -> failed')
+  pure = Leaf
+  Failed <*> _ = Failed
   Leaf f <*> t = fmap f t
-  Choice tl tr <*> t = build' (\failed' leaf choice -> choice (fold failed' leaf choice (tl <*> t)) (fold failed' leaf choice (tr <*> t)))
+  Choice tl tr <*> t = Choice (tl <*> t) (tr <*> t)
 
 instance Alternative Tree where
-  empty = build' (\failed' _ _ -> failed')
-  tl <|> tr = build' (\failed' leaf choice -> choice (fold failed' leaf choice tl) (fold failed' leaf choice tr))
-
-build' :: forall a. (forall b. b -> (a -> b) -> (b -> b -> b) -> b) -> Tree a
-build' g = g Failed Leaf Choice
-{-# NOINLINE [1] build' #-}
-
-fold :: b -> (a -> b) -> (b -> b -> b) -> Tree a -> b
-fold failed' _ _ Failed = failed'
-fold _ leaf _ (Leaf a) = leaf a
-fold failed' leaf choice (Choice leftTree rightTree) =
-  choice
-    (fold failed' leaf choice leftTree)
-    (fold failed' leaf choice rightTree)
-{-# NOINLINE [1] fold #-}
+  empty = Failed
+  (<|>) = Choice
 
 instance Monad Tree where
-  tree >>= f =
-    build'
-      ( \failed' leaf choice ->
-          fold
-            failed'
-            (fold failed' leaf choice . f)
-            choice
-            tree
-      )
-  {-# INLINE (>>=) #-}
-
-{-# RULES
-"treeFold/treeBuild" forall
-  failed'
-  leaf
-  choice
-  (g :: forall b. b -> (a -> b) -> (b -> b -> b) -> b).
-  fold failed' leaf choice (build' g) =
-    g failed' leaf choice
-  #-}
+  Failed >>= _ = Failed
+  Leaf a >>= f = f a
+  Choice tl tr >>= f = Choice (tl >>= f) (tr >>= f)
 
 instance MonadFail Tree where
-  fail _ = build' (\failed _ _ -> failed)
+  fail _ = Failed
 
 instance MonadPlus Tree where
-  mzero = build' (\failed _ _ -> failed)
-  mplus arg1 arg2 = build' (\failed leaf choice -> choice (fold failed leaf choice arg1) (fold failed leaf choice arg2))
+  mzero = Failed
+  mplus = Choice
 
 -- * Search algorithms
 
@@ -220,19 +187,19 @@ instance Sharing Tree where
 instance SharingTop Tree where
   shareTopLevel _ = id
 
-{-# INLINE bind #-}
+{-# INLINE [0] bind #-}
 bind :: Tree a -> (a -> Tree b) -> Tree b
 bind = (>>=)
 
-{-# INLINE rtrn #-}
+{-# INLINE [0] rtrn #-}
 rtrn :: a -> Tree a
 rtrn = pure
 
-{-# INLINE rtrnFunc #-}
+{-# INLINE [0] rtrnFunc #-}
 rtrnFunc :: (Tree a -> Tree b) -> Tree (a --> b)
 rtrnFunc = pure
 
-{-# INLINE app #-}
+{-# INLINE [0] app #-}
 app :: Tree (a --> b) -> Tree a -> Tree b
 app mf ma = mf >>= \f -> f ma
 
@@ -250,19 +217,19 @@ app mf ma = mf >>= \f -> f ma
 -- is (forall x. m blah') and not m (forall x. blah').
 -- To remedy this, we provide the following two functions using unsafeCoerce to
 -- accomodate such a RankN type.
-{-# INLINE rtrnFuncUnsafePoly #-}
+{-# INLINE [0] rtrnFuncUnsafePoly #-}
 rtrnFuncUnsafePoly :: forall a b a'. (a' -> Tree b) -> Tree (a --> b)
 rtrnFuncUnsafePoly f = pure (unsafeCoerce f :: Tree a -> Tree b)
 
-{-# INLINE appUnsafePoly #-}
+{-# INLINE [0] appUnsafePoly #-}
 appUnsafePoly :: forall a b a'. Tree (a --> b) -> a' -> Tree b
 appUnsafePoly mf ma = mf >>= \f -> (unsafeCoerce f :: a' -> Tree b) ma
 
-{-# INLINE fmp #-}
+{-# INLINE [0] fmp #-}
 fmp :: (a -> b) -> Tree a -> Tree b
 fmp = fmap
 
-{-# INLINE shre #-}
+{-# INLINE [0] shre #-}
 shre :: Shareable Tree a => Tree a -> Tree (Tree a)
 shre = share
 
